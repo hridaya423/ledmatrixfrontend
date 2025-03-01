@@ -1,55 +1,43 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
 import { NextResponse } from 'next/server';
 
-let currentMatrixData: Array<{r: number, g: number, b: number}> = [];
-
-if (currentMatrixData.length === 0) {
-  currentMatrixData = Array(64 * 32).fill(null).map(() => ({r: 0, g: 0, b: 0}));
-}
+const matrixCache = {
+  data: Array(64 * 32).fill({ r: 0, g: 0, b: 0 }),
+  lastUpdated: Date.now(),
+  ttl: 5 * 60 * 1000,
+};
 
 export async function POST(request: Request) {
   try {
     const body = await request.json();
     
-    if (!body || typeof body !== 'object') {
+    if (!body?.pixels || !Array.isArray(body.pixels)) {
       return NextResponse.json({
         success: false,
-        error: 'Invalid request body'
+        error: 'Invalid pixel data format'
       }, { status: 400 });
     }
-    
-    const { pixels } = body;
-    
-    if (!Array.isArray(pixels)) {
-      return NextResponse.json({
-        success: false,
-        error: 'Pixels must be an array'
-      }, { status: 400 });
-    }
-    
+
     const processedPixels = [];
     for (let i = 0; i < 64 * 32; i++) {
-      if (i < pixels.length) {
-        const pixel = pixels[i];
-        processedPixels.push({
-          r: Math.min(255, Math.max(0, Math.round(Number(pixel.r || 0)))),
-          g: Math.min(255, Math.max(0, Math.round(Number(pixel.g || 0)))),
-          b: Math.min(255, Math.max(0, Math.round(Number(pixel.b || 0))))
-        });
-      } else {
-        processedPixels.push({ r: 0, g: 0, b: 0 });
-      }
+      const pixel = body.pixels[i] || { r: 0, g: 0, b: 0 };
+      processedPixels.push({
+        r: Math.min(255, Math.max(0, Math.round(pixel.r || 0))),
+        g: Math.min(255, Math.max(0, Math.round(pixel.g || 0))),
+        b: Math.min(255, Math.max(0, Math.round(pixel.b || 0)))
+      });
     }
-    
-    currentMatrixData = processedPixels;
-    
+
+    matrixCache.data = processedPixels;
+    matrixCache.lastUpdated = Date.now();
+
     return NextResponse.json({
       success: true,
-      message: 'Matrix data updated successfully',
-      pixelCount: currentMatrixData.length
+      message: 'Matrix updated',
+      cacheStatus: `Will persist until ${new Date(matrixCache.lastUpdated + matrixCache.ttl).toLocaleTimeString()}`
     });
+
   } catch (error: any) {
-    console.error('Error processing matrix data:', error);
     return NextResponse.json({
       success: false,
       error: error.message
@@ -58,16 +46,13 @@ export async function POST(request: Request) {
 }
 
 export async function GET() {
-  try {
-    return NextResponse.json({
-      pixels: currentMatrixData,
-      timestamp: new Date().toISOString()
-    });
-  } catch (error: any) {
-    console.error('Error in GET request:', error);
-    return NextResponse.json({
-      success: false,
-      error: error.message
-    }, { status: 500 });
+  if (Date.now() - matrixCache.lastUpdated > matrixCache.ttl) {
+    matrixCache.data = Array(64 * 32).fill({ r: 0, g: 0, b: 0 });
+    matrixCache.lastUpdated = Date.now();
   }
+
+  return NextResponse.json({
+    pixels: matrixCache.data,
+    expiresAt: matrixCache.lastUpdated + matrixCache.ttl
+  });
 }
